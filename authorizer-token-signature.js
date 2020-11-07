@@ -3,6 +3,9 @@
 const request = require('request');
 const jws = require('jws');
 const jwk2pem = require('pem-jwk').jwk2pem;
+var AWS = require('aws-sdk');
+AWS.config.update({region: 'us-east-1'});
+var ddb = new AWS.DynamoDB.DocumentClient();
 
 const handlers = module.exports = {};
 
@@ -10,6 +13,7 @@ module.exports.jwtverify = (event, context, callback) =>
 {
 
     console.log("starting")
+    console.log(event)
 
     if (!event.authorizationToken) {
         console.log("Header does not exist not exist")
@@ -37,15 +41,26 @@ module.exports.jwtverify = (event, context, callback) =>
             // console.log("no claims found")
 
         } else {
-
+            console.log(`token info is ${claims.jti}`);
+            var params = {
+                TableName: 'token-' + process.env.ENV_NAME,
+                Key: {
+                    jti: claims.jti
+                }
+            }
+            
+            if (get_token_info(params)) {
+                goodToken(options.event.methodArn, callback);
+                return;
+            }
+            
             /*
-            This code pulls the keys at runtime, which is not optimal.
-            Ideally, the keys should be pinned or cached for better Much performance
-
             Also, the code will permit any Okta Token, in production this should not be used, but
             it works fine for test.
 
-             */
+            */
+            // token was not found in db
+            console.log(`Token ${claims.jti} not found in DB, checking auth server`);
             if ((claims.iss.split("\/").length == 5)) {
                 console.log("API Access Mgmt token")
                 var keyUrl = claims.iss + "/v1/keys"
@@ -125,6 +140,12 @@ module.exports.jwtverify = (event, context, callback) =>
                 }
 
                 if (keygood == 1) { // Token is good, generate aws policy
+                    // save into db
+                    var params = {
+                        TableName: 'token-' + process.env.ENV_NAME,
+                        Item: claims
+                    }
+                    set_token_info(params)
                     goodToken(options.event.methodArn, callback)
 
                 } else {
@@ -143,7 +164,10 @@ function badToken ( cb ){
 
 function goodToken(arn, cb) {
     cb(null, {
-        principalId: "patrickmcdowell",
+        context: {
+            scope: "demo"
+        },
+        principalId: "Invoke",
         policyDocument: {
             Version: '2012-10-17',
             Statement: [{
@@ -168,19 +192,29 @@ function safelyParseJSON (json) {
     return parsed // Could be undefined!
 }
 
+function get_token_info(params) {
+    ddb.get(params, function(err, data) {
+      if (err) {
+        console.log("Error", err);
+        return false
+      } else {
+        console.log("Success", data.Item);
+        return true
+      }
+    });
+}
 
+function set_token_info(params) {
+    if (!params)
+        throw new Error('params not set');    
 
-//Uncomment this if you want to test the Lambda locally
-
-/*
-
-var event = {authorizationToken: "Bearer eyJhbGciOiJSUzI1NiIsImtpZCI6IktVWmNjaVlnRm9hYXJKdUFyNXpMOUtCZ19WaC1IZ0FleDFCaE1LQ3VoSVkifQ.eyJ2ZXIiOjEsImp0aSI6IkFULllGaFZhaVB2OHREWFRIQTRacWJaaHRmRzRUa1ZxcVdPOWcxaS1PUEVBbFUiLCJpc3MiOiJodHRwczovL29rdGFqd3Qub2t0YS5jb20vb2F1dGgyL2F1czIxOHZxbjlodzJnOGNpMXQ3IiwiYXVkIjoiaHR0cHM6Ly9va3Rhand0LmlvIiwiaWF0IjoxNTA0Mzk4MTQ2LCJleHAiOjE1MDQ0MDE3NDYsImNpZCI6IjN4RDVDbVBYOTNmYlpwUHhuUzVhIiwidWlkIjoiMDB1MjFuMDV5M0VKWEhyMTgxdDciLCJzY3AiOlsib3BlbmlkIiwicHJvZmlsZSJdLCJzdWIiOiJ0ZXN0dXNlckB3b3cuY29tIiwiZ3JvdXBzIjpbIkV2ZXJ5b25lIl19.aDRXxe4kI8ZZ21KaJbcTYczXPJ3yiz5F2qsKzBdZN07bHAOzMWg-Nkd0Pawelc1cP29nSdINcxSv6mNwf3nVk2nlGUAnkDT7LuwCCa9nASyjmNt7ernPtltpGdt2CEqbbIB5cEAmdDOELl-mrmFCVCnKBoBX5PZgG4n_XvWjNHNixtUa_F9_l4AW9guu_8urTrqjKK9L_-Z4ShQLQTf7DDDEVs6qD4GPRM_19H-flRXIo8ni10MZFOGLGuhgEOYrtNTyWqXiC1oAvdjOR4As--Ydn14sABnoGHOe4H0uHJ_8tCaCJf-jj7tBdhSdo_sxARHR_2AtA2VrYrCznXzKsA"};
-
-module.exports.jwtverify ( event, {}, function( code, result) {
-    console.log(result)
-
-})
-
-*/
-
-
+    ddb.put(params, function(err, data) {
+      if (err) {
+        console.log("Error", err);
+        return false
+      } else {
+        console.log("Success", data);
+        return true
+      }
+    });
+}

@@ -2,7 +2,7 @@ service: oauth2-jwt-serverless-aws-apigateway # NOTE: update this with your serv
 
 provider:
   name: aws
-  runtime: nodejs6.10
+  runtime: nodejs10.x
 
 functions:
 
